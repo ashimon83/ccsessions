@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Browse Claude Code session logs (~/.claude/projects/) as beautiful HTML in your browser",
   "bin": {
-    "ccsessions": "./bin/cc-history.js"
+    "ccsessions": "./bin/ccsessions.js"
   },
   "files": [
     "bin",
@@ -15,7 +15,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node bin/cc-history.js"
+    "start": "node bin/ccsessions.js"
   },
   "dependencies": {},
   "keywords": [

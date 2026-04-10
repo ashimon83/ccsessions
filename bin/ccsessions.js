@@ -17,7 +17,7 @@ function openInBrowser(url) {
   exec(`${cmd} "${url}"`);
 }
 
-const PORT = parseInt(process.env.CC_HISTORY_PORT) || 3333;
+const PORT = parseInt(process.env.CCSESSIONS_PORT) || 3333;
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -88,7 +88,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   const addr = server.address();
   const url = `http://127.0.0.1:${addr.port}`;
-  console.log(`cc-history running at ${url}`);
+  console.log(`ccsessions running at ${url}`);
   console.log('Press Ctrl+C to stop');
   openInBrowser(url);
 });

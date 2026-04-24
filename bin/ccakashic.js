@@ -85,21 +85,36 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+async function buildOpenUrl(baseUrl) {
+  try {
+    const match = await findSessionForCwd(process.cwd());
+    if (match) {
+      console.log(`Detected session for ${process.cwd()} → opening at bottom`);
+      return `${baseUrl}/project/${encodeURIComponent(match.projectRawName)}/session/${encodeURIComponent(match.sessionId)}#session-bottom`;
+    }
+  } catch (err) {
+    console.error('Failed to auto-detect session:', err.message);
+  }
+  return baseUrl;
+}
+
+server.on('error', async (err) => {
+  if (err.code === 'EADDRINUSE') {
+    const url = `http://127.0.0.1:${PORT}`;
+    console.log(`Port ${PORT} is already in use — reusing existing server at ${url}`);
+    const openUrl = await buildOpenUrl(url);
+    openInBrowser(openUrl);
+    return;
+  }
+  console.error(err);
+  process.exit(1);
+});
+
 server.listen(PORT, '127.0.0.1', async () => {
   const addr = server.address();
   const url = `http://127.0.0.1:${addr.port}`;
   console.log(`ccakashic running at ${url}`);
   console.log('Press Ctrl+C to stop');
-
-  let openUrl = url;
-  try {
-    const match = await findSessionForCwd(process.cwd());
-    if (match) {
-      openUrl = `${url}/project/${encodeURIComponent(match.projectRawName)}/session/${encodeURIComponent(match.sessionId)}#session-bottom`;
-      console.log(`Detected session for ${process.cwd()} → opening at bottom`);
-    }
-  } catch (err) {
-    console.error('Failed to auto-detect session:', err.message);
-  }
+  const openUrl = await buildOpenUrl(url);
   openInBrowser(openUrl);
 });

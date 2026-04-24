@@ -1,6 +1,4 @@
-'use strict';
-
-function getCSS() {
+export function getCSS(): string {
   return `
 :root {
   --bg: #fafaf9;
@@ -569,7 +567,7 @@ body {
 `;
 }
 
-function getAppJS() {
+export function getAppJS(): string {
   return `
 (function() {
   // Simple markdown renderer (no external dependency)
@@ -672,4 +670,3 @@ function getAppJS() {
 `;
 }
 
-module.exports = { getCSS, getAppJS };

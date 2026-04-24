@@ -1,13 +1,38 @@
-'use strict';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as readline from 'readline';
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const readline = require('readline');
+export const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
 
-const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
+export interface Project {
+  name: string;
+  rawName: string;
+  dir: string;
+  sessionCount: number;
+  lastModified: Date;
+}
 
-function decodeDirName(dirName) {
+export interface SessionPreview {
+  id: string;
+  path: string;
+  timestamp: string | null;
+  lastModified: number;
+  preview: string;
+  gitBranch: string | null;
+  slug: string | null;
+  model: string | null;
+  hasSubagents: boolean;
+  totalTokens: number;
+  outputTokens: number;
+}
+
+export interface CwdMatch {
+  projectRawName: string;
+  sessionId: string;
+}
+
+export function decodeDirName(dirName: string): string {
   // Directory names encode paths: /Users/foo/bar → -Users-foo-bar
   // This is lossy (dots become dashes too), but good enough for display
   if (dirName.startsWith('-')) {
@@ -16,23 +41,22 @@ function decodeDirName(dirName) {
   return dirName;
 }
 
-function listProjects() {
+export function listProjects(): Project[] {
   if (!fs.existsSync(CLAUDE_DIR)) {
     return [];
   }
 
   const entries = fs.readdirSync(CLAUDE_DIR, { withFileTypes: true });
-  const projects = [];
+  const projects: Project[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
     const projectDir = path.join(CLAUDE_DIR, entry.name);
-    const jsonlFiles = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+    const jsonlFiles = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
 
     if (jsonlFiles.length === 0) continue;
 
-    // Get most recent modification time
     let lastModified = 0;
     for (const f of jsonlFiles) {
       const stat = fs.statSync(path.join(projectDir, f));
@@ -48,13 +72,13 @@ function listProjects() {
     });
   }
 
-  projects.sort((a, b) => b.lastModified - a.lastModified);
+  projects.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
   return projects;
 }
 
-async function getSessionPreview(filePath) {
+async function getSessionPreview(filePath: string): Promise<SessionPreview> {
   return new Promise((resolve) => {
-    const result = {
+    const result: SessionPreview = {
       id: path.basename(filePath, '.jsonl'),
       path: filePath,
       timestamp: null,
@@ -68,7 +92,6 @@ async function getSessionPreview(filePath) {
       outputTokens: 0,
     };
 
-    // Check for subagents directory
     const sessionDir = path.join(path.dirname(filePath), result.id);
     if (fs.existsSync(path.join(sessionDir, 'subagents'))) {
       result.hasSubagents = true;
@@ -95,12 +118,10 @@ async function getSessionPreview(filePath) {
           result.slug = obj.slug;
         }
 
-        // Extract model from first assistant message
         if (!result.model && obj.type === 'assistant' && obj.message?.model) {
           result.model = obj.message.model;
         }
 
-        // Aggregate token usage
         if (obj.type === 'assistant' && obj.message?.usage) {
           const u = obj.message.usage;
           result.totalTokens += (u.input_tokens || 0) + (u.output_tokens || 0)
@@ -108,7 +129,6 @@ async function getSessionPreview(filePath) {
           result.outputTokens += u.output_tokens || 0;
         }
 
-        // Extract first user message as preview
         if (!foundPreview && obj.type === 'user' && obj.message) {
           const content = obj.message.content;
           let text = '';
@@ -137,27 +157,25 @@ async function getSessionPreview(filePath) {
   });
 }
 
-async function listSessions(projectDir) {
-  const jsonlFiles = fs.readdirSync(projectDir)
-    .filter(f => f.endsWith('.jsonl'))
-    .map(f => path.join(projectDir, f));
+export async function listSessions(projectDir: string): Promise<SessionPreview[]> {
+  const jsonlFiles = fs
+    .readdirSync(projectDir)
+    .filter((f) => f.endsWith('.jsonl'))
+    .map((f) => path.join(projectDir, f));
 
   const sessions = await Promise.all(jsonlFiles.map(getSessionPreview));
-
-  // Sort by file modification time descending (most recently active first)
   sessions.sort((a, b) => b.lastModified - a.lastModified);
-
   return sessions;
 }
 
-function readCwdFromSession(filePath) {
+function readCwdFromSession(filePath: string): Promise<string | null> {
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf-8' }),
       crlfDelay: Infinity,
     });
 
-    let found = null;
+    let found: string | null = null;
     rl.on('line', (line) => {
       if (found) return;
       try {
@@ -176,10 +194,10 @@ function readCwdFromSession(filePath) {
   });
 }
 
-function latestSessionFile(projectDir) {
-  const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+function latestSessionFile(projectDir: string): { file: string; mtimeMs: number } | null {
+  const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
   if (!files.length) return null;
-  let best = null;
+  let best: string | null = null;
   let bestMtime = 0;
   for (const f of files) {
     const mtime = fs.statSync(path.join(projectDir, f)).mtimeMs;
@@ -191,12 +209,12 @@ function latestSessionFile(projectDir) {
   return best ? { file: best, mtimeMs: bestMtime } : null;
 }
 
-async function findSessionForCwd(cwd) {
+export async function findSessionForCwd(cwd: string): Promise<CwdMatch | null> {
   // Pick the project whose cwd is the most specific (longest) match for the
   // given cwd. A brand-new session in a specific subdir should win over an
   // older, more-active ancestor project.
   const projects = listProjects();
-  let bestMatch = null;
+  let bestMatch: CwdMatch | null = null;
   let bestLen = -1;
 
   for (const project of projects) {
@@ -217,5 +235,3 @@ async function findSessionForCwd(cwd) {
 
   return bestMatch;
 }
-
-module.exports = { listProjects, listSessions, decodeDirName, findSessionForCwd, CLAUDE_DIR };

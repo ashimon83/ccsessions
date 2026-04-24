@@ -1,46 +1,62 @@
-'use strict';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as readline from 'readline';
 
-const fs = require('fs');
-const readline = require('readline');
-const path = require('path');
+// Raw JSONL entries are heterogeneous; use a permissive type for them.
+type RawLine = any;
+export type Message = any;
 
-async function parseSession(sessionPath) {
+export interface UsageStats {
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreation: number;
+  cacheRead: number;
+  totalTokens: number;
+  cacheHitRate: number;
+  durationMs: number;
+}
+
+export interface ParsedSession {
+  messages: Message[];
+  subagents: Record<string, Message[]>;
+  sessionPath: string;
+  stats: UsageStats;
+}
+
+export async function parseSession(sessionPath: string): Promise<ParsedSession> {
   const lines = await readJsonlLines(sessionPath);
   const messages = buildConversation(lines);
 
-  // Check for subagent conversations
   const sessionId = path.basename(sessionPath, '.jsonl');
   const subagentsDir = path.join(path.dirname(sessionPath), sessionId, 'subagents');
-  const subagents = {};
+  const subagents: Record<string, Message[]> = {};
 
   if (fs.existsSync(subagentsDir)) {
-    const agentFiles = fs.readdirSync(subagentsDir).filter(f => f.endsWith('.jsonl'));
+    const agentFiles = fs.readdirSync(subagentsDir).filter((f) => f.endsWith('.jsonl'));
     for (const f of agentFiles) {
       const agentLines = await readJsonlLines(path.join(subagentsDir, f));
       const agentMessages = buildConversation(agentLines);
-      // Extract agent ID from filename: agent-a1234.jsonl → a1234
       const agentId = f.replace(/^agent-/, '').replace(/\.jsonl$/, '');
       subagents[agentId] = agentMessages;
     }
   }
 
-  // Inline subagent conversations into the main message list
   inlineSubagents(messages, subagents);
 
-  // Aggregate token usage stats
   const stats = aggregateUsage(lines);
 
   return { messages, subagents: {}, sessionPath, stats };
 }
 
-function aggregateUsage(lines) {
+function aggregateUsage(lines: RawLine[]): UsageStats {
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheCreation = 0;
   let cacheRead = 0;
   let turns = 0;
-  let firstTimestamp = null;
-  let lastTimestamp = null;
+  let firstTimestamp: string | null = null;
+  let lastTimestamp: string | null = null;
 
   for (const line of lines) {
     if (line.timestamp) {
@@ -67,7 +83,7 @@ function aggregateUsage(lines) {
 
   let durationMs = 0;
   if (firstTimestamp && lastTimestamp) {
-    durationMs = new Date(lastTimestamp) - new Date(firstTimestamp);
+    durationMs = new Date(lastTimestamp).getTime() - new Date(firstTimestamp).getTime();
   }
 
   return {
@@ -82,9 +98,9 @@ function aggregateUsage(lines) {
   };
 }
 
-function readJsonlLines(filePath) {
+function readJsonlLines(filePath: string): Promise<RawLine[]> {
   return new Promise((resolve) => {
-    const lines = [];
+    const lines: RawLine[] = [];
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf-8' }),
       crlfDelay: Infinity,
@@ -103,20 +119,18 @@ function readJsonlLines(filePath) {
   });
 }
 
-function buildConversation(lines) {
-  const messages = [];
+function buildConversation(lines: RawLine[]): Message[] {
+  const messages: Message[] = [];
 
-  // Deduplicate assistant messages by message.id (streaming: keep last)
-  const assistantById = new Map();
+  const assistantById = new Map<string, RawLine>();
   for (const line of lines) {
     if (line.type === 'assistant' && line.message?.id) {
       assistantById.set(line.message.id, line);
     }
   }
-  const seenAssistantIds = new Set();
+  const seenAssistantIds = new Set<string>();
 
   for (const line of lines) {
-    // Skip metadata-only types
     if (['file-history-snapshot', 'last-prompt', 'permission-mode'].includes(line.type)) {
       continue;
     }
@@ -124,11 +138,9 @@ function buildConversation(lines) {
     if (line.type === 'user') {
       processUserMessage(line, messages);
     } else if (line.type === 'assistant') {
-      // Deduplicate: skip if we've already processed this message.id
       const msgId = line.message?.id;
       if (msgId) {
         if (seenAssistantIds.has(msgId)) continue;
-        // Only process the final version
         if (assistantById.get(msgId) !== line) continue;
         seenAssistantIds.add(msgId);
       }
@@ -136,23 +148,16 @@ function buildConversation(lines) {
     } else if (line.type === 'system') {
       processSystemMessage(line, messages);
     }
-    // Skip progress, queue-operation, etc.
   }
 
-  // Pair tool_use with tool_result
   pairToolMessages(messages);
-
-  // Calculate per-turn token usage (tokens between each user input)
   calculateTurnUsage(messages);
-
-  // Calculate elapsed time for each message (time since previous message)
   calculateElapsed(messages);
 
   return messages;
 }
 
-function parseLocalCommand(text) {
-  // Parse <bash-input>, <bash-stdout>, <bash-stderr> tags
+function parseLocalCommand(text: string) {
   const inputMatch = text.match(/<bash-input>([\s\S]*?)<\/bash-input>/);
   const stdoutMatch = text.match(/<bash-stdout>([\s\S]*?)<\/bash-stdout>/);
   const stderrMatch = text.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
@@ -171,13 +176,11 @@ function parseLocalCommand(text) {
   return null;
 }
 
-function processUserText(text, line, messages) {
-  // Skip local-command-caveat (system instruction, not user input)
+function processUserText(text: string, line: RawLine, messages: Message[]): void {
   if (text.match(/^<local-command-caveat>/)) {
     return;
   }
 
-  // Parse local command input/output
   const localCmd = parseLocalCommand(text);
   if (localCmd) {
     if (localCmd.subtype === 'input') {
@@ -188,7 +191,6 @@ function processUserText(text, line, messages) {
         uuid: line.uuid,
       });
     } else if (localCmd.subtype === 'output') {
-      // Attach to previous local_command if exists
       const prev = messages.length > 0 ? messages[messages.length - 1] : null;
       if (prev && prev.type === 'local_command' && !prev.stdout) {
         prev.stdout = localCmd.stdout;
@@ -207,7 +209,6 @@ function processUserText(text, line, messages) {
     return;
   }
 
-  // Strip system-reminder tags but keep surrounding user text
   const stripped = text
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     .replace(/<command-name>[\s\S]*?<\/command-name>/g, '')
@@ -226,7 +227,7 @@ function processUserText(text, line, messages) {
   }
 }
 
-function processUserMessage(line, messages) {
+function processUserMessage(line: RawLine, messages: Message[]): void {
   const content = line.message?.content;
   if (!content) return;
 
@@ -242,29 +243,26 @@ function processUserMessage(line, messages) {
       if (block.type === 'text' && block.text?.trim()) {
         processUserText(block.text, line, messages);
       } else if (block.type === 'tool_result') {
-        const toolResult = {
+        const toolResult: Message = {
           type: 'tool_result',
           toolUseId: block.tool_use_id,
           timestamp: line.timestamp,
           uuid: line.uuid,
         };
 
-        // Extract structured result from toolUseResult
         if (line.toolUseResult) {
           toolResult.richResult = line.toolUseResult;
         }
 
-        // Raw content
         if (typeof block.content === 'string') {
           toolResult.content = block.content;
         } else if (Array.isArray(block.content)) {
           const texts = block.content
-            .filter(b => b.type === 'text')
-            .map(b => b.text);
+            .filter((b: any) => b.type === 'text')
+            .map((b: any) => b.text);
           toolResult.content = texts.join('\n');
         }
 
-        // Try to read persisted output
         if (toolResult.content && toolResult.content.includes('<persisted-output>')) {
           const match = toolResult.content.match(/Full output saved to: ([^\n<]+)/);
           if (match) {
@@ -285,7 +283,7 @@ function processUserMessage(line, messages) {
   }
 }
 
-function processAssistantMessage(line, messages) {
+function processAssistantMessage(line: RawLine, messages: Message[]): void {
   const content = line.message?.content;
   if (!content || !Array.isArray(content)) return;
 
@@ -324,18 +322,15 @@ function processAssistantMessage(line, messages) {
   }
 }
 
-function calculateTurnUsage(messages) {
-  // Walk backwards from each user message, summing usage of preceding assistant messages
-  // A "turn" = user input → all assistant responses until next user input
+function calculateTurnUsage(messages: Message[]): void {
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].type !== 'user' && messages[i].type !== 'local_command') continue;
 
-    // Sum usage of all following assistant/tool messages until next user message
     let totalInput = 0;
     let totalOutput = 0;
     let totalCacheRead = 0;
     let totalCacheCreate = 0;
-    const seenUsageIds = new Set(); // Dedupe (multiple blocks from same API response)
+    const seenUsageIds = new Set<string>();
 
     for (let j = i + 1; j < messages.length; j++) {
       const m = messages[j];
@@ -349,7 +344,6 @@ function calculateTurnUsage(messages) {
       }
     }
 
-    // Find turn_duration in the following messages
     let turnDurationMs = 0;
     for (let j = i + 1; j < messages.length; j++) {
       const m = messages[j];
@@ -374,19 +368,18 @@ function calculateTurnUsage(messages) {
   }
 }
 
-function calculateElapsed(messages) {
+function calculateElapsed(messages: Message[]): void {
   for (let i = 1; i < messages.length; i++) {
     const prev = messages[i - 1];
     const curr = messages[i];
     if (prev.timestamp && curr.timestamp) {
-      const elapsed = new Date(curr.timestamp) - new Date(prev.timestamp);
+      const elapsed = new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime();
       if (elapsed > 0) {
         curr.elapsedMs = elapsed;
       }
     }
-    // For tool_use with paired result, calculate execution time
     if (curr.type === 'tool_use' && curr.result?.timestamp && curr.timestamp) {
-      const execTime = new Date(curr.result.timestamp) - new Date(curr.timestamp);
+      const execTime = new Date(curr.result.timestamp).getTime() - new Date(curr.timestamp).getTime();
       if (execTime > 0) {
         curr.execMs = execTime;
       }
@@ -394,7 +387,7 @@ function calculateElapsed(messages) {
   }
 }
 
-function processSystemMessage(line, messages) {
+function processSystemMessage(line: RawLine, messages: Message[]): void {
   if (line.subtype === 'turn_duration') {
     messages.push({
       type: 'system',
@@ -414,10 +407,9 @@ function processSystemMessage(line, messages) {
   }
 }
 
-function inlineSubagents(messages, subagents) {
+function inlineSubagents(messages: Message[], subagents: Record<string, Message[]>): void {
   if (!Object.keys(subagents).length) return;
 
-  // For each Agent tool_use that has a paired result, extract agentId from the result content
   for (const msg of messages) {
     if (msg.type !== 'tool_use' || msg.toolName !== 'Agent') continue;
     if (!msg.result) continue;
@@ -433,11 +425,10 @@ function inlineSubagents(messages, subagents) {
     }
   }
 
-  // Fallback: match remaining subagents by description in meta files
   const usedIds = new Set(
-    messages.filter(m => m.subagentId).map(m => m.subagentId)
+    messages.filter((m) => m.subagentId).map((m) => m.subagentId),
   );
-  const unmatchedAgents = Object.keys(subagents).filter(id => !usedIds.has(id));
+  const unmatchedAgents = Object.keys(subagents).filter((id) => !usedIds.has(id));
 
   if (unmatchedAgents.length) {
     for (const msg of messages) {
@@ -449,7 +440,6 @@ function inlineSubagents(messages, subagents) {
 
       for (let i = unmatchedAgents.length - 1; i >= 0; i--) {
         const agentId = unmatchedAgents[i];
-        // Check first user message of subagent for matching description
         const firstMsg = subagents[agentId]?.[0];
         if (firstMsg?.type === 'user') {
           const agentText = (firstMsg.text || '').toLowerCase();
@@ -465,16 +455,14 @@ function inlineSubagents(messages, subagents) {
   }
 }
 
-function pairToolMessages(messages) {
-  // Build map of tool_use id → index
-  const toolUseMap = new Map();
+function pairToolMessages(messages: Message[]): void {
+  const toolUseMap = new Map<string, number>();
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].type === 'tool_use') {
       toolUseMap.set(messages[i].toolUseId, i);
     }
   }
 
-  // Attach tool_result to corresponding tool_use
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].type === 'tool_result' && messages[i].toolUseId) {
       const useIdx = toolUseMap.get(messages[i].toolUseId);
@@ -485,12 +473,9 @@ function pairToolMessages(messages) {
     }
   }
 
-  // Remove paired tool_results (they're now nested in tool_use)
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]._paired) {
       messages.splice(i, 1);
     }
   }
 }
-
-module.exports = { parseSession };

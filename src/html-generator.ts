@@ -1,22 +1,22 @@
-'use strict';
+import { getCSS, getAppJS } from './template-assets';
+import type { Message, ParsedSession, UsageStats } from './parser';
+import type { SessionPreview } from './discover';
 
-const { getCSS, getAppJS } = require('./template-assets');
-
-function escapeHtml(str) {
-  return str
+function escapeHtml(str: unknown): string {
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
 
-function formatTime(ts) {
+function formatTime(ts: string | number | Date | null | undefined): string {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function formatDuration(ms) {
+function formatDuration(ms: number | null | undefined): string {
   if (!ms) return '';
   if (ms < 1000) return `${ms}ms`;
   const s = Math.round(ms / 1000);
@@ -26,7 +26,7 @@ function formatDuration(ms) {
   return `${m}m ${rs}s`;
 }
 
-function toolUseSummary(msg) {
+function toolUseSummary(msg: any): string {
   const name = msg.toolName;
   const input = msg.input || {};
 
@@ -50,12 +50,12 @@ function toolUseSummary(msg) {
   }
 }
 
-function renderToolResult(msg) {
+function renderToolResult(msg: any): string {
   if (!msg.result) return '';
 
   const result = msg.result;
   const rich = result.richResult;
-  const parts = [];
+  const parts: string[] = [];
 
   if (rich) {
     // Bash result
@@ -100,8 +100,8 @@ function renderToolResult(msg) {
   return parts.join('');
 }
 
-function renderDiff(patches) {
-  const lines = [];
+function renderDiff(patches: any[]): string {
+  const lines: string[] = [];
   lines.push('<div class="diff">');
   for (const patch of patches) {
     lines.push(`<div class="diff-hunk">@@ -${patch.oldStart},${patch.oldLines} +${patch.newStart},${patch.newLines} @@</div>`);
@@ -121,14 +121,14 @@ function renderDiff(patches) {
   return lines.join('\n');
 }
 
-function msgId(ts) {
+function msgId(ts: string | number | Date | null | undefined): string {
   if (!ts) return `msg-${Date.now()}${Math.random().toString(36).slice(2, 5)}`;
   const d = new Date(ts);
-  const pad = (n, len = 2) => String(n).padStart(len, '0');
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
   return `t${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function renderMessage(msg) {
+function renderMessage(msg: any): string {
   const id = msgId(msg.timestamp);
   const time = `<a class="timestamp" href="#${id}">${formatTime(msg.timestamp)}</a>`;
 
@@ -140,8 +140,8 @@ function renderMessage(msg) {
       })()
     : '';
 
-  function makeItemBadge(m) {
-    const parts = [];
+  function makeItemBadge(m: any): string {
+    const parts: string[] = [];
     const c = m.usage
       ? calcCost(m.usage.input_tokens || 0, m.usage.output_tokens || 0, m.usage.cache_read_input_tokens || 0, m.usage.cache_creation_input_tokens || 0)
       : null;
@@ -201,7 +201,7 @@ function renderMessage(msg) {
   }
 }
 
-function renderToolInput(msg) {
+function renderToolInput(msg: any): string {
   const input = msg.input || {};
   const name = msg.toolName;
 
@@ -221,20 +221,25 @@ function renderToolInput(msg) {
   return `<div class="tool-input"><pre><code>${escapeHtml(json)}</code></pre></div>`;
 }
 
-function renderSubagent(agentId, messages) {
+function renderSubagent(agentId: string, messages: any[]): string {
   const agentHtml = messages.map(renderMessage).join('\n');
   return `<div class="msg msg-subagent"><details><summary><span class="tool-summary">Subagent: ${escapeHtml(agentId)}</span></summary><div class="subagent-content">${agentHtml}</div></details></div>`;
 }
 
-function formatDateOnly(ts) {
+function formatDateOnly(ts: string | number | Date | null | undefined): string {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
-function groupMessagesByDate(messages) {
-  const groups = [];
-  let currentDate = null;
+interface DateGroup {
+  date: string;
+  messages: any[];
+}
+
+function groupMessagesByDate(messages: any[]): DateGroup[] {
+  const groups: DateGroup[] = [];
+  let currentDate: string | null = null;
   for (const msg of messages) {
     const dateStr = formatDateOnly(msg.timestamp);
     if (dateStr && dateStr !== currentDate) {
@@ -257,18 +262,18 @@ const COST_PER_M = {
   cacheWrite: 18.75,
 };
 
-function tokenCostUsd(tokens, rate) {
+function tokenCostUsd(tokens: number, rate: number): number {
   return (tokens / 1_000_000) * rate;
 }
 
-function formatCost(usd) {
+function formatCost(usd: number): string {
   if (usd < 0.001) return '<$0.01';
   if (usd < 0.01) return `$${usd.toFixed(3)}`;
   if (usd < 1) return `$${usd.toFixed(2)}`;
   return `$${usd.toFixed(2)}`;
 }
 
-function calcCost(input, output, cacheRead, cacheWrite) {
+function calcCost(input: number, output: number, cacheRead: number, cacheWrite: number) {
   const inCost = tokenCostUsd(input, COST_PER_M.input);
   const outCost = tokenCostUsd(output, COST_PER_M.output);
   const crCost = tokenCostUsd(cacheRead, COST_PER_M.cacheRead);
@@ -283,13 +288,13 @@ function calcCost(input, output, cacheRead, cacheWrite) {
   };
 }
 
-function formatTokens(n) {
+function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(n);
 }
 
-function formatDurationLong(ms) {
+function formatDurationLong(ms: number | null | undefined): string {
   if (!ms) return '';
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -299,12 +304,12 @@ function formatDurationLong(ms) {
   return `${m}m`;
 }
 
-function renderStats(stats) {
+function renderStats(stats: UsageStats | null | undefined): string {
   if (!stats || !stats.turns) return '';
 
   const totalCost = calcCost(stats.inputTokens, stats.outputTokens, stats.cacheRead, stats.cacheCreation);
 
-  const items = [];
+  const items: string[] = [];
   items.push(`<span class="stat-item"><span class="stat-label">Est. Cost</span><span class="stat-value">${totalCost.totalStr}</span></span>`);
   items.push(`<span class="stat-item"><span class="stat-label">Turns</span><span class="stat-value">${stats.turns}</span></span>`);
   items.push(`<span class="stat-item"><span class="stat-label">Input</span><span class="stat-value">${formatTokens(stats.inputTokens)}</span></span>`);
@@ -319,7 +324,13 @@ function renderStats(stats) {
   return `<div class="stats-bar">${items.join('')}</div>`;
 }
 
-function generate(parsed, options = {}) {
+export interface GenerateOptions {
+  projectName?: string;
+  session?: Partial<SessionPreview> & { slug?: string | null };
+  backUrl?: string;
+}
+
+export function generate(parsed: ParsedSession, options: GenerateOptions = {}): string {
   const { projectName, session, backUrl } = options;
   const title = session?.slug || session?.id || 'Session';
   const date = session?.timestamp
@@ -397,7 +408,7 @@ ${detailNavJS()}
 </html>`;
 }
 
-function detailLayoutCSS() {
+function detailLayoutCSS(): string {
   return `
 .detail-layout {
   display: flex;
@@ -551,7 +562,7 @@ function detailLayoutCSS() {
 `;
 }
 
-function detailNavJS() {
+function detailNavJS(): string {
   return `
 (function() {
   var groups = Array.from(document.querySelectorAll('.detail-date-group'));
@@ -583,4 +594,3 @@ function detailNavJS() {
 `;
 }
 
-module.exports = { generate };

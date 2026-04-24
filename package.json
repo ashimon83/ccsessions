@@ -3,11 +3,10 @@
   "version": "0.2.4",
   "description": "Browse Claude Code session logs (~/.claude/projects/) as beautiful HTML in your browser — an Akashic Record of your Claude Code sessions",
   "bin": {
-    "ccakashic": "bin/ccakashic.js"
+    "ccakashic": "dist/bin/ccakashic.js"
   },
   "files": [
-    "bin",
-    "lib",
+    "dist",
     "vendor",
     "README.md"
   ],
@@ -15,9 +14,19 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node bin/ccakashic.js"
+    "build": "tsc",
+    "start": "npm run build && node dist/bin/ccakashic.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepack": "npm run build"
   },
   "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
   "keywords": [
     "claude",
     "claude-code",

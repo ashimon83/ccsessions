@@ -34,7 +34,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/' || pathname === '') {
-      const projects = listProjects();
+      const projects = await listProjects();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(generateIndex(projects));
       return;
@@ -43,7 +43,7 @@ const server = http.createServer(async (req, res) => {
     const projectMatch = pathname.match(/^\/project\/(.+)$/);
     if (projectMatch && !pathname.includes('/session/')) {
       const rawName = decodeURIComponent(projectMatch[1]);
-      const projects = listProjects();
+      const projects = await listProjects();
       const project = projects.find((p) => p.rawName === rawName);
       if (!project) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -60,7 +60,7 @@ const server = http.createServer(async (req, res) => {
     if (sessionMatch) {
       const rawName = decodeURIComponent(sessionMatch[1]);
       const sessionId = decodeURIComponent(sessionMatch[2]);
-      const projects = listProjects();
+      const projects = await listProjects();
       const project = projects.find((p) => p.rawName === rawName);
       if (!project) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });

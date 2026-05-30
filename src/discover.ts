@@ -41,7 +41,7 @@ export function decodeDirName(dirName: string): string {
   return dirName;
 }
 
-export function listProjects(): Project[] {
+export async function listProjects(): Promise<Project[]> {
   if (!fs.existsSync(CLAUDE_DIR)) {
     return [];
   }
@@ -63,8 +63,17 @@ export function listProjects(): Project[] {
       if (stat.mtimeMs > lastModified) lastModified = stat.mtimeMs;
     }
 
+    // Prefer the real cwd recorded in the session over the lossy directory-name
+    // decoding (dots and slashes both collapse to dashes in the dir name).
+    let name = decodeDirName(entry.name);
+    const latest = latestSessionFile(projectDir);
+    if (latest) {
+      const cwd = await readCwdFromSession(path.join(projectDir, latest.file));
+      if (cwd) name = cwd;
+    }
+
     projects.push({
-      name: decodeDirName(entry.name),
+      name,
       rawName: entry.name,
       dir: projectDir,
       sessionCount: jsonlFiles.length,
@@ -213,7 +222,7 @@ export async function findSessionForCwd(cwd: string): Promise<CwdMatch | null> {
   // Pick the project whose cwd is the most specific (longest) match for the
   // given cwd. A brand-new session in a specific subdir should win over an
   // older, more-active ancestor project.
-  const projects = listProjects();
+  const projects = await listProjects();
   let bestMatch: CwdMatch | null = null;
   let bestLen = -1;
 
